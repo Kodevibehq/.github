@@ -1,0 +1,65 @@
+# Kodevibehq organization-default gitleaks config.
+#
+# Inherited by every repo's `.github/workflows/secret-scan.yml` caller
+# (see .github/workflows/secret-scan-reusable.yml). A repo can override
+# any rule by committing its own .gitleaks.toml at the repo root.
+#
+# Posture: trust upstream defaults for the catalogue; layer allowlists on
+# top for the specific noise this org hits (Supabase anon-keys, lockfiles,
+# fixtures).
+
+title = "Kodevibehq org-default"
+
+[extend]
+useDefault = true
+
+# Supabase anon-keys are PUBLIC by design — they ship in every frontend.
+# We want to keep gitleaks loud on service_role keys (those leak full DB
+# access), so we allowlist ONLY the anon variant via its payload role
+# claim. Gitleaks reports the full JWT as the secret; the payload segment
+# of a Supabase JWT base64-decodes to JSON containing "role":"anon" for
+# anon keys and "role":"service_role" for service keys.
+#
+# We match the role on the *line* (regexTarget=line) rather than on the
+# secret match, because the role is in the decoded payload and gitleaks
+# can't decode base64 in regex — but the surrounding code typically has
+# the key in context (env var name, JS literal) making the JWT visible
+# in the raw line. The payload itself ends in "...eyJyb2xlIjoiYW5vbiI..."
+# (base64 of {"role":"anon",...}) which IS regex-detectable directly in
+# the JWT string. We anchor on that.
+[[rules]]
+id = "supabase-anon-key"
+description = "Skip Supabase anon JWTs (public by design)"
+regex = '''eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]*cm9sZSI6ImFub24[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{20,}'''
+keywords = ["eyJ"]
+tags = ["allowlist", "supabase"]
+
+# Global allowlists: paths/files that produce noise but no real risk.
+# Lock-files (deterministic hashes), generated bundles, snapshots,
+# fixtures, and the bouw-app's Supabase migrations (which contain
+# rotated/dev tokens in seed scripts).
+[allowlist]
+description = "Org-wide noise filter"
+paths = [
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)bun\.lock(b)?$''',
+  '''(^|/)pnpm-lock\.yaml$''',
+  '''(^|/)yarn\.lock$''',
+  '''(^|/)Cargo\.lock$''',
+  '''(^|/)poetry\.lock$''',
+  '''(^|/)go\.sum$''',
+  '''(^|/)__fixtures__/''',
+  '''(^|/)__snapshots__/''',
+  '''(^|/)fixtures/''',
+  '''(^|/)\.next/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+  '''(^|/)\.cache/''',
+  '''\.min\.(js|css)$''',
+  '''\.map$''',
+  # Self-allowlist: this file documents tokens that LOOK like secrets
+  # but are deliberately included as examples / negative tests.
+  '''(^|/)\.gitleaks\.toml$''',
+  '''(^|/)\.gitleaksignore$''',
+  '''(^|/)\.infisicalignore$''',
+]
