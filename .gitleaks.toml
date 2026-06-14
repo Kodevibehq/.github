@@ -13,26 +13,9 @@ title = "Kodevibehq org-default"
 [extend]
 useDefault = true
 
-# Supabase anon-keys are PUBLIC by design — they ship in every frontend.
-# We want to keep gitleaks loud on service_role keys (those leak full DB
-# access), so we allowlist ONLY the anon variant via its payload role
-# claim. Gitleaks reports the full JWT as the secret; the payload segment
-# of a Supabase JWT base64-decodes to JSON containing "role":"anon" for
-# anon keys and "role":"service_role" for service keys.
-#
-# We match the role on the *line* (regexTarget=line) rather than on the
-# secret match, because the role is in the decoded payload and gitleaks
-# can't decode base64 in regex — but the surrounding code typically has
-# the key in context (env var name, JS literal) making the JWT visible
-# in the raw line. The payload itself ends in "...eyJyb2xlIjoiYW5vbiI..."
-# (base64 of {"role":"anon",...}) which IS regex-detectable directly in
-# the JWT string. We anchor on that.
-[[rules]]
-id = "supabase-anon-key"
-description = "Skip Supabase anon JWTs (public by design)"
-regex = '''eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]*cm9sZSI6ImFub24[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{20,}'''
-keywords = ["eyJ"]
-tags = ["allowlist", "supabase"]
+# NOTE — anon-key handling lives in the [allowlist] below, NOT as a [[rules]]
+# entry. A custom rule would ADD detections; we want to SUPPRESS them. See
+# the `regexes` in [allowlist].
 
 # Global allowlists: paths/files that produce noise but no real risk.
 # Lock-files (deterministic hashes), generated bundles, snapshots,
@@ -40,6 +23,31 @@ tags = ["allowlist", "supabase"]
 # rotated/dev tokens in seed scripts).
 [allowlist]
 description = "Org-wide noise filter"
+# Suppress Supabase ANON keys (public by design — they ship in every
+# frontend bundle) while keeping SERVICE_ROLE keys detectable.
+#
+# A Supabase JWT's payload base64-encodes JSON containing "role":"anon".
+# Because base64 alignment depends on the byte offset of that fragment
+# (and Supabase emits both compact `"role":"anon"` and spaced/pretty
+# `"role": "anon"` payloads), the same text yields different base64
+# substrings. We allowlist every alignment variant of the anon role value.
+# None of these substrings appear in a service_role token (its role value
+# is "service_role"), so those keys still fire.
+#
+# regexTarget=match → tested against the matched secret (the JWT), not the
+# whole line. Verified against MYF/Kodend/Unlabeld history: 0 anon FPs,
+# service_role still caught.
+regexTarget = "match"
+regexes = [
+  # compact  "role":"anon"  — 3 byte alignments
+  '''InJvbGUiOiJhbm9u''',
+  '''b2xlIjoiYW5v''',
+  '''cm9sZSI6ImFu''',
+  # spaced  "role": "anon"  — 3 byte alignments
+  '''InJvbGUiOiAiYW5v''',
+  '''b2xlIjogImFu''',
+  '''cm9sZSI6ICJh''',
+]
 paths = [
   '''(^|/)package-lock\.json$''',
   '''(^|/)bun\.lock(b)?$''',
